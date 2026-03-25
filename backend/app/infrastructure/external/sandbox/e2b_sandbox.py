@@ -522,15 +522,21 @@ class E2BSandboxImpl(Sandbox):
             return False
     
     async def get_browser(self):
-        """Get browser instance - E2B provides browser via sandbox
+        """Get browser instance - Initialize PlaywrightBrowser with E2B CDP URL
         
         Returns:
             Browser instance or None
         """
         try:
-            # E2B provides browser access, return None as browser is managed by E2B
-            logger.info(f"Browser access via E2B Sandbox {self._id}")
-            return None
+            if not self._browser:
+                # Import here to avoid circular imports
+                from app.infrastructure.external.browser.playwright_browser import PlaywrightBrowser
+                
+                # Create browser with E2B CDP URL
+                self._browser = PlaywrightBrowser(cdp_url=self.cdp_url)
+                await self._browser.initialize()
+                logger.info(f"Browser initialized for E2B Sandbox {self._id}")
+            return self._browser
         except Exception as e:
             logger.error(f"Failed to get browser: {e}")
             return None
