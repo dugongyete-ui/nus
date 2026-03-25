@@ -457,8 +457,8 @@ class E2BSandboxImpl(Sandbox):
         """
         try:
             if not self._browser:
-                # Use Playwright browser for E2B
-                self._browser = PlaywrightBrowser()
+                # Use Playwright browser for E2B with CDP URL
+                self._browser = PlaywrightBrowser(cdp_url=self.cdp_url)
                 await self._browser.initialize()
             return self._browser
         except Exception as e:
