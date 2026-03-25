@@ -56,6 +56,7 @@ class BaseAgent(ABC):
             temperature=settings.temperature,
             max_tokens=settings.max_tokens,
             base_url=settings.api_base,
+            api_key=settings.api_key,
         )
         if settings.extra_headers:
             kwargs["default_headers"] = settings.extra_headers

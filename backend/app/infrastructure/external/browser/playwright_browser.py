@@ -25,6 +25,7 @@ class PlaywrightBrowser:
             temperature=self.settings.temperature,
             max_tokens=self.settings.max_tokens,
             base_url=self.settings.api_base,
+            api_key=self.settings.api_key,
         )
         if self.settings.extra_headers:
             kwargs["default_headers"] = self.settings.extra_headers

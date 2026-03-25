@@ -33,7 +33,7 @@ class E2BSandboxImpl(Sandbox):
     @property
     def cdp_url(self) -> str:
         """CDP URL for browser automation - E2B provides browser access via sandbox"""
-        return f"ws://localhost:9222"
+        return f"ws://localhost:9222/devtools/browser/6f3fb56f-d9b5-4105-9364-2cb1e798ef6b"
     
     @property
     def vnc_url(self) -> str:
