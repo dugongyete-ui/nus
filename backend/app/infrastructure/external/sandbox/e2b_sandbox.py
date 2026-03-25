@@ -40,80 +40,19 @@ class E2BSandboxImpl(Sandbox):
         """VNC URL for desktop access - E2B provides desktop via sandbox"""
         return f"ws://localhost:5901"
     
-    def _extract_exit_code(self, execution) -> int:
-        """Extract exit code from E2B Execution object
-        
-        E2B SDK returns Execution object with:
-        - results: List[Result] - output results
-        - logs: Logs - stdout/stderr logs
-        - error: Optional[ExecutionError] - execution error if any
-        - execution_count: Optional[int] - execution count
-        
-        Exit code is 0 if no error, otherwise 1
-        """
-        if execution.error:
-            return 1
-        return 0
-    
-    def _extract_stdout(self, execution) -> str:
-        """Extract stdout from E2B Execution object"""
-        stdout_parts = []
-        
-        # Get logs stdout
-        if hasattr(execution, 'logs') and execution.logs:
-            if hasattr(execution.logs, 'stdout') and execution.logs.stdout:
-                for msg in execution.logs.stdout:
-                    if hasattr(msg, 'message'):
-                        stdout_parts.append(msg.message)
-                    elif isinstance(msg, str):
-                        stdout_parts.append(msg)
-        
-        # Get results text
-        if hasattr(execution, 'results') and execution.results:
-            for result in execution.results:
-                if hasattr(result, 'text') and result.text:
-                    stdout_parts.append(result.text)
-        
-        return '\n'.join(stdout_parts)
-    
-    def _extract_stderr(self, execution) -> str:
-        """Extract stderr from E2B Execution object"""
-        stderr_parts = []
-        
-        # Get logs stderr
-        if hasattr(execution, 'logs') and execution.logs:
-            if hasattr(execution.logs, 'stderr') and execution.logs.stderr:
-                for msg in execution.logs.stderr:
-                    if hasattr(msg, 'message'):
-                        stderr_parts.append(msg.message)
-                    elif isinstance(msg, str):
-                        stderr_parts.append(msg)
-        
-        # Get error traceback
-        if hasattr(execution, 'error') and execution.error:
-            error = execution.error
-            if hasattr(error, 'traceback') and error.traceback:
-                stderr_parts.append(error.traceback)
-            elif hasattr(error, 'value') and error.value:
-                stderr_parts.append(f"{error.name}: {error.value}")
-        
-        return '\n'.join(stderr_parts)
-    
     async def ensure_sandbox(self) -> None:
         """Ensure sandbox is ready"""
         try:
-            # Test sandbox connectivity with simple echo command
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            # Test sandbox connectivity with simple echo command using commands.run
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 "echo 'Sandbox ready'"
             )
             
-            exit_code = self._extract_exit_code(execution)
-            if exit_code == 0:
+            if result.exit_code == 0:
                 logger.info(f"E2B Sandbox {self._id} is ready")
             else:
-                stderr = self._extract_stderr(execution)
-                raise RuntimeError(f"Sandbox health check failed: {stderr}")
+                raise RuntimeError(f"Sandbox health check failed: {result.stderr}")
         except Exception as e:
             logger.error(f"Failed to ensure sandbox: {e}")
             raise
@@ -140,27 +79,23 @@ class E2BSandboxImpl(Sandbox):
             if exec_dir:
                 full_command = f"cd {exec_dir} && {command}"
             
-            # Execute command via E2B
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            # Execute command via E2B commands.run (for shell commands)
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 full_command,
                 timeout=600
             )
             
-            exit_code = self._extract_exit_code(execution)
-            stdout = self._extract_stdout(execution)
-            stderr = self._extract_stderr(execution)
-            
             return ToolResult(
-                success=exit_code == 0,
+                success=result.exit_code == 0,
                 data={
-                    "exit_code": exit_code,
-                    "stdout": stdout,
-                    "stderr": stderr,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
                     "console": [
-                        {"type": "stdout", "content": stdout},
-                        {"type": "stderr", "content": stderr}
-                    ] if stdout or stderr else []
+                        {"type": "stdout", "content": result.stdout},
+                        {"type": "stderr", "content": result.stderr}
+                    ] if result.stdout or result.stderr else []
                 }
             )
         except Exception as e:
@@ -271,21 +206,19 @@ class E2BSandboxImpl(Sandbox):
             ToolResult with file content
         """
         try:
-            # Read file using E2B
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            # Read file using E2B commands.run
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 f"cat {file}"
             )
             
-            exit_code = self._extract_exit_code(execution)
-            if exit_code != 0:
-                stderr = self._extract_stderr(execution)
+            if result.exit_code != 0:
                 return ToolResult(
                     success=False,
-                    data={"error": stderr}
+                    data={"error": result.stderr}
                 )
             
-            content = self._extract_stdout(execution)
+            content = result.stdout
             
             # Handle line range if specified
             if start_line or end_line:
@@ -324,14 +257,13 @@ class E2BSandboxImpl(Sandbox):
             if sudo:
                 cmd = f"sudo {cmd}"
             
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 cmd
             )
             
-            exit_code = self._extract_exit_code(execution)
             return ToolResult(
-                success=exit_code == 0,
+                success=result.exit_code == 0,
                 data={"file": file, "bytes_written": len(content)}
             )
         except Exception as e:
@@ -365,14 +297,13 @@ class E2BSandboxImpl(Sandbox):
             if sudo:
                 cmd = f"sudo {cmd}"
             
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 cmd
             )
             
-            exit_code = self._extract_exit_code(execution)
             return ToolResult(
-                success=exit_code == 0,
+                success=result.exit_code == 0,
                 data={"file": file, "replaced": True}
             )
         except Exception as e:
@@ -395,13 +326,12 @@ class E2BSandboxImpl(Sandbox):
         """
         try:
             cmd = f"grep -n '{regex}' {file}"
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 cmd
             )
             
-            stdout = self._extract_stdout(execution)
-            matches = stdout.strip().split('\n') if stdout else []
+            matches = result.stdout.strip().split('\n') if result.stdout else []
             
             return ToolResult(
                 success=True,
@@ -427,13 +357,12 @@ class E2BSandboxImpl(Sandbox):
         """
         try:
             cmd = f"find {path} -name '{glob_pattern}'"
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 cmd
             )
             
-            stdout = self._extract_stdout(execution)
-            files = stdout.strip().split('\n') if stdout else []
+            files = result.stdout.strip().split('\n') if result.stdout else []
             
             return ToolResult(
                 success=True,
@@ -465,14 +394,13 @@ class E2BSandboxImpl(Sandbox):
             
             # Write to sandbox
             cmd = f"cat > {path} << 'EOF'\n{content.decode('utf-8', errors='ignore')}\nEOF"
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 cmd
             )
             
-            exit_code = self._extract_exit_code(execution)
             return ToolResult(
-                success=exit_code == 0,
+                success=result.exit_code == 0,
                 data={"path": path, "size": len(content)}
             )
         except Exception as e:
@@ -489,19 +417,16 @@ class E2BSandboxImpl(Sandbox):
             File content as binary stream
         """
         try:
-            execution = await asyncio.to_thread(
-                self._sandbox.run_code,
+            result = await asyncio.to_thread(
+                self._sandbox.commands.run,
                 f"cat {path}"
             )
             
-            exit_code = self._extract_exit_code(execution)
-            if exit_code == 0:
-                stdout = self._extract_stdout(execution)
+            if result.exit_code == 0:
                 import io
-                return io.BytesIO(stdout.encode('utf-8'))
+                return io.BytesIO(result.stdout.encode('utf-8'))
             else:
-                stderr = self._extract_stderr(execution)
-                raise RuntimeError(f"Failed to download file: {stderr}")
+                raise RuntimeError(f"Failed to download file: {result.stderr}")
         except Exception as e:
             logger.error(f"Failed to download file: {e}")
             raise
