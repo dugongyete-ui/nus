@@ -1,0 +1,9 @@
+
+> vite-vue-typescript-starter@0.0.0 dev /home/ubuntu/ai-manus/frontend
+> vite --host 0.0.0.0 --port 5173
+
+
+  VITE v4.5.14  ready in 477 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://169.254.0.21:5173/
