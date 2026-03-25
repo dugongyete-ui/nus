@@ -19,7 +19,7 @@ from app.application.services.email_service import EmailService
 from app.infrastructure.external.cache import get_cache
 
 # Import all required dependencies for agent service
-from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox
+from app.infrastructure.external.sandbox.e2b_sandbox import E2BSandboxImpl
 from app.infrastructure.external.task.redis_task import RedisStreamTask
 from app.infrastructure.repositories.mongo_agent_repository import MongoAgentRepository
 from app.infrastructure.repositories.mongo_session_repository import MongoSessionRepository
@@ -46,7 +46,7 @@ def get_agent_service() -> AgentService:
     # Create all dependencies
     agent_repository = MongoAgentRepository()
     session_repository = MongoSessionRepository()
-    sandbox_cls = DockerSandbox
+    sandbox_cls = E2BSandboxImpl
     task_cls = RedisStreamTask
     file_storage = get_file_storage()
     search_engine = get_search_engine()

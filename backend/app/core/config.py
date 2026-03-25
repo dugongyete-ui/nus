@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -97,9 +98,11 @@ class Settings(BaseSettings):
     # Logging configuration
     log_level: str = "INFO"
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="allow"
+    )
         
     def validate(self):
         """Validate configuration settings"""
