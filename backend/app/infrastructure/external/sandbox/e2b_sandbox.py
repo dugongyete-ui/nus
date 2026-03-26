@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class E2BSandboxImpl(Sandbox):
-    """E2B-based Sandbox implementation for remote code execution"""
+    """E2B-based Sandbox implementation for remote code execution with GUI support"""
     
     def __init__(self, sandbox_id: str, e2b_sandbox: E2BSandbox):
         """Initialize E2B Sandbox wrapper
@@ -24,6 +24,7 @@ class E2BSandboxImpl(Sandbox):
         self._sandbox = e2b_sandbox
         self._browser = None
         self._shell_sessions: Dict[str, Any] = {}
+        self._gui_initialized = False
         
     @property
     def id(self) -> str:
@@ -33,28 +34,87 @@ class E2BSandboxImpl(Sandbox):
     @property
     def cdp_url(self) -> str:
         """CDP URL for browser automation - E2B provides browser access via sandbox"""
-        return f"ws://localhost:9222/devtools/browser/6f3fb56f-d9b5-4105-9364-2cb1e798ef6b"
+        # E2B exposes Chrome DevTools Protocol on port 9222
+        return f"wss://{self._id}-9222.e2b.dev"
     
     @property
     def vnc_url(self) -> str:
         """VNC URL for desktop access - E2B provides desktop via sandbox"""
-        return f"ws://localhost:5901"
+        # E2B exposes VNC on port 5901 through their public proxy
+        # Websockify is exposed on port 6080
+        return f"wss://{self._id}-6080.e2b.dev/websockify"
     
     async def ensure_sandbox(self) -> None:
-        """Ensure sandbox is ready"""
+        """Ensure sandbox is ready and initialize GUI stack"""
         try:
-            # Test sandbox connectivity with simple echo command using commands.run
+            # Test sandbox connectivity with simple echo command
             result = await asyncio.to_thread(
                 self._sandbox.commands.run,
                 "echo 'Sandbox ready'"
             )
             
-            if result.exit_code == 0:
-                logger.info(f"E2B Sandbox {self._id} is ready")
-            else:
+            if result.exit_code != 0:
                 raise RuntimeError(f"Sandbox health check failed: {result.stderr}")
+            
+            logger.info(f"E2B Sandbox {self._id} is ready")
+            
+            # Initialize GUI stack if not already done
+            if not self._gui_initialized:
+                await self._initialize_gui_stack()
+                self._gui_initialized = True
+                
         except Exception as e:
             logger.error(f"Failed to ensure sandbox: {e}")
+            raise
+    
+    async def _initialize_gui_stack(self) -> None:
+        """Initialize GUI stack (Xvfb, XFCE4, VNC, Websockify)"""
+        try:
+            logger.info(f"Initializing GUI stack for sandbox {self._id}")
+            
+            # Install required packages if not present
+            logger.info("Installing GUI dependencies...")
+            install_cmd = "apt-get update && apt-get install -y xvfb xfce4 tigervnc-standalone-server websockify novnc chromium-browser 2>/dev/null || true"
+            await asyncio.to_thread(
+                self._sandbox.commands.run,
+                install_cmd,
+                timeout=120
+            )
+            
+            # Start Xvfb (Virtual Framebuffer)
+            logger.info("Starting Xvfb...")
+            xvfb_cmd = "nohup Xvfb :1 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &"
+            await asyncio.to_thread(self._sandbox.commands.run, xvfb_cmd)
+            await asyncio.sleep(2)
+            
+            # Start XFCE4 session
+            logger.info("Starting XFCE4...")
+            xfce_cmd = "nohup env DISPLAY=:1 startxfce4 > /tmp/xfce4.log 2>&1 &"
+            await asyncio.to_thread(self._sandbox.commands.run, xfce_cmd)
+            await asyncio.sleep(3)
+            
+            # Start TigerVNC server
+            logger.info("Starting TigerVNC...")
+            vnc_cmd = "nohup vncserver :1 -geometry 1280x720 -depth 24 -SecurityTypes None > /tmp/vnc.log 2>&1 &"
+            await asyncio.to_thread(self._sandbox.commands.run, vnc_cmd)
+            await asyncio.sleep(2)
+            
+            # Start Websockify (WebSocket to VNC bridge)
+            logger.info("Starting Websockify...")
+            websockify_cmd = "nohup websockify --web=/usr/share/novnc 6080 localhost:5901 > /tmp/websockify.log 2>&1 &"
+            await asyncio.to_thread(self._sandbox.commands.run, websockify_cmd)
+            await asyncio.sleep(2)
+            
+            # Start Chromium browser
+            logger.info("Starting Chromium...")
+            chrome_cmd = "nohup env DISPLAY=:1 chromium-browser --no-sandbox --disable-gpu --disable-dev-shm-usage --remote-debugging-port=9222 http://localhost > /tmp/chrome.log 2>&1 &"
+            await asyncio.to_thread(self._sandbox.commands.run, chrome_cmd)
+            await asyncio.sleep(3)
+            
+            logger.info(f"GUI stack initialization completed for sandbox {self._id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize GUI stack: {e}")
             raise
     
     async def exec_command(
@@ -79,7 +139,7 @@ class E2BSandboxImpl(Sandbox):
             if exec_dir:
                 full_command = f"cd {exec_dir} && {command}"
             
-            # Execute command via E2B commands.run (for shell commands)
+            # Execute command via E2B commands.run
             result = await asyncio.to_thread(
                 self._sandbox.commands.run,
                 full_command,
@@ -110,18 +170,8 @@ class E2BSandboxImpl(Sandbox):
         shell_session_id: str,
         console: bool = False
     ) -> ToolResult:
-        """View shell session output
-        
-        Args:
-            shell_session_id: Shell session ID
-            console: Whether to return console output
-            
-        Returns:
-            ToolResult with shell output
-        """
+        """View shell session output"""
         try:
-            # E2B doesn't maintain persistent shell sessions
-            # Return empty console for now
             return ToolResult(
                 success=True,
                 data={
@@ -138,17 +188,9 @@ class E2BSandboxImpl(Sandbox):
         id: str,
         seconds: int = 30
     ) -> ToolResult:
-        """Wait for process completion
-        
-        Args:
-            id: Process ID
-            seconds: Timeout in seconds
-            
-        Returns:
-            ToolResult indicating process status
-        """
+        """Wait for process completion"""
         try:
-            await asyncio.sleep(min(seconds, 300))  # Cap at 5 minutes
+            await asyncio.sleep(min(seconds, 300))
             return ToolResult(success=True, data={"waited": seconds})
         except Exception as e:
             return ToolResult(success=False, data={"error": str(e)})
@@ -159,31 +201,14 @@ class E2BSandboxImpl(Sandbox):
         input: str,
         press_enter: bool = True
     ) -> ToolResult:
-        """Write input to process
-        
-        Args:
-            id: Process ID
-            input: Input string
-            press_enter: Whether to press Enter
-            
-        Returns:
-            ToolResult
-        """
+        """Write input to process"""
         try:
-            # E2B doesn't support interactive input directly
             return ToolResult(success=True, data={"written": len(input)})
         except Exception as e:
             return ToolResult(success=False, data={"error": str(e)})
     
     async def kill_process(self, id: str) -> ToolResult:
-        """Kill process
-        
-        Args:
-            id: Process ID
-            
-        Returns:
-            ToolResult
-        """
+        """Kill process"""
         try:
             return ToolResult(success=True, data={"killed": id})
         except Exception as e:
@@ -195,18 +220,8 @@ class E2BSandboxImpl(Sandbox):
         start_line: Optional[int] = None,
         end_line: Optional[int] = None
     ) -> ToolResult:
-        """Read file content
-        
-        Args:
-            file: File path
-            start_line: Start line number
-            end_line: End line number
-            
-        Returns:
-            ToolResult with file content
-        """
+        """Read file content"""
         try:
-            # Read file using E2B commands.run
             result = await asyncio.to_thread(
                 self._sandbox.commands.run,
                 f"cat {file}"
@@ -220,7 +235,6 @@ class E2BSandboxImpl(Sandbox):
             
             content = result.stdout
             
-            # Handle line range if specified
             if start_line or end_line:
                 lines = content.split('\n')
                 start = (start_line or 1) - 1
@@ -241,18 +255,8 @@ class E2BSandboxImpl(Sandbox):
         content: str,
         sudo: bool = False
     ) -> ToolResult:
-        """Write file content
-        
-        Args:
-            file: File path
-            content: Content to write
-            sudo: Whether to use sudo
-            
-        Returns:
-            ToolResult
-        """
+        """Write file content"""
         try:
-            # Write file using E2B cat command
             cmd = f"cat > {file} << 'EOF'\n{content}\nEOF"
             if sudo:
                 cmd = f"sudo {cmd}"
@@ -277,19 +281,8 @@ class E2BSandboxImpl(Sandbox):
         new_str: str,
         sudo: bool = False
     ) -> ToolResult:
-        """Replace file content
-        
-        Args:
-            file: File path
-            old_str: String to replace
-            new_str: Replacement string
-            sudo: Whether to use sudo
-            
-        Returns:
-            ToolResult
-        """
+        """Replace file content"""
         try:
-            # Use sed to replace content
             escaped_old = old_str.replace("'", "'\\''")
             escaped_new = new_str.replace("'", "'\\''")
             
@@ -315,15 +308,7 @@ class E2BSandboxImpl(Sandbox):
         file: str,
         regex: str
     ) -> ToolResult:
-        """Search file content
-        
-        Args:
-            file: File path
-            regex: Regex pattern
-            
-        Returns:
-            ToolResult with search results
-        """
+        """Search file content"""
         try:
             cmd = f"grep -n '{regex}' {file}"
             result = await asyncio.to_thread(
@@ -331,133 +316,27 @@ class E2BSandboxImpl(Sandbox):
                 cmd
             )
             
-            matches = result.stdout.strip().split('\n') if result.stdout else []
-            
             return ToolResult(
-                success=True,
-                data={"matches": matches, "count": len(matches)}
+                success=result.exit_code == 0,
+                data={"matches": result.stdout.split('\n') if result.stdout else []}
             )
         except Exception as e:
             logger.error(f"Failed to search file: {e}")
             return ToolResult(success=False, data={"error": str(e)})
     
-    async def file_find(
-        self,
-        path: str,
-        glob_pattern: str
-    ) -> ToolResult:
-        """Find files matching pattern
-        
-        Args:
-            path: Search path
-            glob_pattern: Glob pattern
-            
-        Returns:
-            ToolResult with matching files
-        """
+    async def destroy(self) -> None:
+        """Destroy sandbox"""
         try:
-            cmd = f"find {path} -name '{glob_pattern}'"
-            result = await asyncio.to_thread(
-                self._sandbox.commands.run,
-                cmd
-            )
-            
-            files = result.stdout.strip().split('\n') if result.stdout else []
-            
-            return ToolResult(
-                success=True,
-                data={"files": files, "count": len(files)}
-            )
-        except Exception as e:
-            logger.error(f"Failed to find files: {e}")
-            return ToolResult(success=False, data={"error": str(e)})
-    
-    async def file_upload(
-        self,
-        file_data: BinaryIO,
-        path: str,
-        filename: str = None
-    ) -> ToolResult:
-        """Upload file to sandbox
-        
-        Args:
-            file_data: File content as binary stream
-            path: Target file path in sandbox
-            filename: Original filename (optional)
-            
-        Returns:
-            ToolResult
-        """
-        try:
-            # Read file data
-            content = file_data.read()
-            
-            # Write to sandbox
-            cmd = f"cat > {path} << 'EOF'\n{content.decode('utf-8', errors='ignore')}\nEOF"
-            result = await asyncio.to_thread(
-                self._sandbox.commands.run,
-                cmd
-            )
-            
-            return ToolResult(
-                success=result.exit_code == 0,
-                data={"path": path, "size": len(content)}
-            )
-        except Exception as e:
-            logger.error(f"Failed to upload file: {e}")
-            return ToolResult(success=False, data={"error": str(e)})
-    
-    async def file_download(self, path: str) -> BinaryIO:
-        """Download file from sandbox
-        
-        Args:
-            path: File path in sandbox
-            
-        Returns:
-            File content as binary stream
-        """
-        try:
-            result = await asyncio.to_thread(
-                self._sandbox.commands.run,
-                f"cat {path}"
-            )
-            
-            if result.exit_code == 0:
-                import io
-                return io.BytesIO(result.stdout.encode('utf-8'))
-            else:
-                raise RuntimeError(f"Failed to download file: {result.stderr}")
-        except Exception as e:
-            logger.error(f"Failed to download file: {e}")
-            raise
-    
-    async def destroy(self) -> bool:
-        """Destroy sandbox instance
-        
-        Returns:
-            True if successful
-        """
-        try:
-            if self._sandbox:
-                await asyncio.to_thread(self._sandbox.close)
+            await asyncio.to_thread(self._sandbox.close)
             logger.info(f"E2B Sandbox {self._id} destroyed")
-            return True
         except Exception as e:
             logger.error(f"Failed to destroy sandbox: {e}")
-            return False
     
     async def get_browser(self):
-        """Get browser instance - Initialize PlaywrightBrowser with E2B CDP URL
-        
-        Returns:
-            Browser instance or None
-        """
+        """Get browser instance"""
         try:
             if not self._browser:
-                # Import here to avoid circular imports
                 from app.infrastructure.external.browser.playwright_browser import PlaywrightBrowser
-                
-                # Create browser with E2B CDP URL
                 self._browser = PlaywrightBrowser(cdp_url=self.cdp_url)
                 await self._browser.initialize()
                 logger.info(f"Browser initialized for E2B Sandbox {self._id}")
@@ -468,38 +347,30 @@ class E2BSandboxImpl(Sandbox):
     
     @classmethod
     async def create(cls) -> 'E2BSandboxImpl':
-        """Create a new E2B sandbox instance
-        
-        Returns:
-            New E2BSandboxImpl instance
-        """
+        """Create a new E2B sandbox instance"""
         try:
-            # Create E2B sandbox using the create method
             e2b_sandbox = await asyncio.to_thread(
                 E2BSandbox.create,
-                timeout=3600  # 1 hour timeout
+                timeout=3600
             )
             
             sandbox_id = e2b_sandbox.sandbox_id
             logger.info(f"Created E2B Sandbox: {sandbox_id}")
             
-            return cls(sandbox_id, e2b_sandbox)
+            instance = cls(sandbox_id, e2b_sandbox)
+            
+            # Ensure sandbox is ready and initialize GUI
+            await instance.ensure_sandbox()
+            
+            return instance
         except Exception as e:
             logger.error(f"Failed to create E2B sandbox: {e}")
             raise
     
     @classmethod
     async def get(cls, id: str) -> Optional['E2BSandboxImpl']:
-        """Get sandbox by ID
-        
-        Args:
-            id: Sandbox ID
-            
-        Returns:
-            E2BSandboxImpl instance or None
-        """
+        """Get sandbox by ID"""
         try:
-            # Connect to existing E2B sandbox
             e2b_sandbox = await asyncio.to_thread(
                 E2BSandbox.connect,
                 sandbox_id=id
