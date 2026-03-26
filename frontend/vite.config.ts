@@ -28,7 +28,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-    allowedHosts: ['5173-i0fgsnbgdpwdu4yajg36f-cc60360d.sg1.manus.computer', 'localhost', '127.0.0.1'],
+    allowedHosts: ['5173-i06zq82qq0oqz5vm4xwn8-c20ee561.sg1.manus.computer', '5173-i0fgsnbgdpwdu4yajg36f-cc60360d.sg1.manus.computer', 'localhost', '127.0.0.1', '169.254.0.21'],
     middlewareMode: false,
     ...(process.env.BACKEND_URL && {
       proxy: {

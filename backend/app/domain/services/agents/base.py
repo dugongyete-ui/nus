@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from langchain.messages import AIMessage, HumanMessage, ToolCall, ToolMessage, SystemMessage
 from app.domain.services.tools.base import Tool
 from app.domain.utils.robust_json_parser import RobustJsonParser, ToolCallParseError
+from app.domain.utils.retry_utils import retry_on_rate_limit
 
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,8 @@ class BaseAgent(ABC):
         self.memory.roll_back()
         await self._repository.save_memory(self._agent_id, self.name, self.memory)
 
-    async def ask_with_messages(self, messages: List[Dict[str, Any]], format: Optional[str] = None) -> AIMessage:
+    @retry_on_rate_limit(max_retries=5, initial_delay=2.0, max_delay=30.0)
+    async def ask_with_messages(self, messages: List, format: Optional[str] = None) -> AIMessage:
         await self._add_to_memory(messages)
 
         response_format = None
